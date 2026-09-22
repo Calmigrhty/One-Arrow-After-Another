@@ -20,57 +20,12 @@ DIR_MAP = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
 
 # ================= 关卡设计 =================
 LEVELS = [
-    {
-        "grid": [
-            [0, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 4, 2, 0],
-            [0, 0, 2, 0]
-        ],
-        "mistakes": 3,
-        "target_time": 30
-    },
-    {
-        "grid": [
-            [0, 1, 0, 2],
-            [4, 4, 1, 0],
-            [0, 1, 0, 0],
-            [0, 3, 1, 2]
-        ],
-        "mistakes": 4,
-        "target_time": 45
-    },
-    {
-        "grid": [
-            [1, 2, 3, 4],
-            [3, 2, 1, 1],
-            [1, 3, 4, 4],
-            [4, 2, 1, 1]
-        ],
-        "mistakes": 5,
-        "target_time": 50
-    },
-    {
-        "grid": [
-            [1, 1, 3, 3],
-            [4, 1, 1, 4],
-            [3, 4, 1, 4],
-            [1, 1, 1, 1]
-        ],
-        "mistakes": 3,
-        "target_time": 45
-    },
-    {
-        "grid": [
-            [0, 1, 1, 1, 0],
-            [3, 4, 1, 4, 4],
-            [3, 3, 1, 2, 4],
-            [3, 1, 3, 2, 4],
-            [0, 2, 2, 2, 0]
-        ],
-        "mistakes": 5,
-        "target_time": 60
-    }
+    {"grid": [[0, 0, 0, 0], [0, 1, 0, 0], [0, 4, 2, 0], [0, 0, 2, 0]], "mistakes": 3, "target_time": 30},
+    {"grid": [[0, 1, 0, 2], [4, 4, 1, 0], [0, 1, 0, 0], [0, 3, 1, 2]], "mistakes": 4, "target_time": 45},
+    {"grid": [[1, 2, 3, 4], [3, 2, 1, 1], [1, 3, 4, 4], [4, 2, 1, 1]], "mistakes": 5, "target_time": 50},
+    {"grid": [[1, 1, 3, 3], [4, 1, 1, 4], [3, 4, 1, 4], [1, 1, 1, 1]], "mistakes": 3, "target_time": 45},
+    {"grid": [[0, 1, 1, 1, 0], [3, 4, 1, 4, 4], [3, 3, 1, 2, 4], [3, 1, 3, 2, 4], [0, 2, 2, 2, 0]], "mistakes": 5,
+     "target_time": 60}
 ]
 
 
@@ -160,7 +115,7 @@ class Game:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("一箭又一箭 - 智能求解版")
+        pygame.display.set_caption("一箭又一箭 - 完整版")
         self.clock = pygame.time.Clock()
 
         self.font_title = get_chinese_font(60)
@@ -171,6 +126,7 @@ class Game:
             {"top": (30, 35, 50), "bottom": (15, 18, 25), "dot": (45, 50, 70)},
             {"top": (25, 45, 35), "bottom": (10, 20, 15), "dot": (40, 65, 50)},
             {"top": (50, 30, 40), "bottom": (25, 10, 15), "dot": (70, 45, 55)},
+            {"top": (45, 25, 25), "bottom": (20, 10, 10), "dot": (65, 40, 40)}
         ]
 
         self.state = "START"
@@ -183,12 +139,15 @@ class Game:
         self.earned_stars = 0
         self.history = []
 
-        # AI 自动求解与作弊判定
         self.is_auto_playing = False
-        self.used_ai = False  # <--- 新增：作弊标记
+        self.used_ai = False
         self.auto_path = []
         self.last_auto_move_time = 0
         self.no_solution_msg_timer = 0
+
+        # 随机模式专属数据
+        self.random_level_data = None
+        self.random_theme_idx = 0
 
         self.level_records = [{'stars': 0, 'time': 999} for _ in range(len(LEVELS))]
         self.load_records()
@@ -224,22 +183,16 @@ class Game:
                 pygame.draw.circle(bg, theme["dot"], (x, y), 2)
         return bg
 
-    def load_level(self, level_idx):
-        if level_idx >= len(LEVELS): return
-        theme_idx = level_idx % len(self.themes)
+    def setup_level_from_data(self, level_data, theme_idx):
         self.bg_surface = self.create_background(self.themes[theme_idx])
-
-        level_data = LEVELS[level_idx]
-        grid_data = level_data["grid"]
-        self.rows, self.cols = len(grid_data), len(grid_data[0])
-        self.mistakes = level_data["mistakes"]
-        self.max_mistakes = level_data["mistakes"]
+        self.rows, self.cols = len(level_data["grid"]), len(level_data["grid"][0])
+        self.mistakes, self.max_mistakes = level_data["mistakes"], level_data["mistakes"]
         self.target_time = level_data["target_time"]
 
         self.offset_x = (SCREEN_WIDTH - self.cols * GRID_SIZE) // 2
         self.offset_y = (SCREEN_HEIGHT - self.rows * GRID_SIZE) // 2 + 50
 
-        self.grid = [[grid_data[r][c] for c in range(self.cols)] for r in range(self.rows)]
+        self.grid = [[level_data["grid"][r][c] for c in range(self.cols)] for r in range(self.rows)]
         self.arrows = []
         for r in range(self.rows):
             for c in range(self.cols):
@@ -249,15 +202,55 @@ class Game:
         self.has_started_moving = False
         self.history = []
         self.is_auto_playing = False
-        self.used_ai = False  # 加载关卡时，重置作弊标记
+        self.used_ai = False
         self.auto_path = []
         self.no_solution_msg_timer = 0
 
-    def check_path_clear(self, r, c, dir_type, custom_grid=None):
+    def load_level(self, level_idx):
+        if level_idx >= len(LEVELS): return
+        self.current_level = level_idx
+        self.setup_level_from_data(LEVELS[level_idx], level_idx % len(self.themes))
+
+    def init_new_random_level(self):
+        """核心算法：逆向时间生成法，保证关卡 100% 绝对有解"""
+        self.current_level = "RANDOM"
+        # 将行数限制在 4 到 5 行，防止棋盘过长挡住底部文字
+        rows = random.randint(4, 5)
+        cols = random.randint(5, 6)
+        difficulty = random.randint(10, rows * cols - 5)  # 稍微调整箭头生成数量下限
+
+        grid = [[0 for _ in range(cols)] for _ in range(rows)]
+        placed = 0
+
+        while placed < difficulty:
+            valid_slots = []
+            for r in range(rows):
+                for c in range(cols):
+                    if grid[r][c] == 0:
+                        for d in [1, 2, 3, 4]:
+                            if self.check_path_clear(r, c, d, grid, rows, cols):
+                                valid_slots.append((r, c, d))
+            if not valid_slots: break
+
+            r, c, d = random.choice(valid_slots)
+            grid[r][c] = d
+            placed += 1
+
+        self.random_level_data = {
+            "grid": grid,
+            "mistakes": max(3, placed // 5),
+            "target_time": placed * 2
+        }
+        self.random_theme_idx = random.randint(0, len(self.themes) - 1)
+        self.setup_level_from_data(self.random_level_data, self.random_theme_idx)
+
+    def check_path_clear(self, r, c, dir_type, custom_grid=None, r_max=None, c_max=None):
         grid = custom_grid if custom_grid else self.grid
+        rows = r_max if r_max else self.rows
+        cols = c_max if c_max else self.cols
         dr, dc = DIR_MAP[dir_type]
         curr_r, curr_c = r + dr, c + dc
-        while 0 <= curr_r < self.rows and 0 <= curr_c < self.cols:
+        while 0 <= curr_r < rows and 0 <= curr_c < cols:
             if grid[curr_r][curr_c] != 0: return False
             curr_r += dr
             curr_c += dc
@@ -289,10 +282,8 @@ class Game:
 
     def start_ai_solver(self):
         if self.is_auto_playing: return
-
-        self.used_ai = True  # <--- 只要点过 AI 求解，本局成绩作废
+        self.used_ai = True
         solution = self.get_solution()
-
         if solution:
             self.auto_path = solution
             self.is_auto_playing = True
@@ -372,10 +363,16 @@ class Game:
             by = start_y + row * (btn_h + spacing_y)
             rect = pygame.Rect(bx, by, btn_w, btn_h)
             if rect.collidepoint(pos):
-                self.current_level = i
-                self.load_level(self.current_level)
+                self.load_level(i)
                 self.state = "PLAYING"
                 return
+
+        # 监听无限模式按钮点击
+        btn_rand_w, btn_rand_h = 250, 60
+        btn_rand = pygame.Rect((SCREEN_WIDTH - btn_rand_w) // 2, 530, btn_rand_w, btn_rand_h)
+        if btn_rand.collidepoint(pos):
+            self.init_new_random_level()
+            self.state = "PLAYING"
 
     def handle_playing_click(self, pos):
         if self.is_auto_playing:
@@ -392,10 +389,16 @@ class Game:
         if btn_ai.collidepoint(pos): self.start_ai_solver(); return
         if btn_hint.collidepoint(pos): self.trigger_hint(); return
         if btn_undo.collidepoint(pos): self.undo(); return
-        if btn_restart.collidepoint(pos): self.load_level(self.current_level); return
         if btn_menu.collidepoint(pos):
             self.state = "LEVEL_SELECT"
             self.bg_surface = self.create_background(self.themes[0])
+            return
+
+        if btn_restart.collidepoint(pos):
+            if self.current_level == "RANDOM":
+                self.setup_level_from_data(self.random_level_data, self.random_theme_idx)
+            else:
+                self.load_level(self.current_level)
             return
 
         mx, my = pos
@@ -460,16 +463,24 @@ class Game:
                 else:
                     self.draw_text("未通关", self.font_normal, GRAY, rect.centerx, rect.bottom + 25)
 
+            # 绘制随机模式按钮
+            btn_rand_w, btn_rand_h = 250, 60
+            btn_rand = pygame.Rect((SCREEN_WIDTH - btn_rand_w) // 2, 530, btn_rand_w, btn_rand_h)
+            rand_color = (255, 120, 120) if btn_rand.collidepoint((mx, my)) else (200, 80, 80)
+            pygame.draw.rect(self.screen, rand_color, btn_rand, border_radius=20)
+            pygame.draw.rect(self.screen, WHITE, btn_rand, width=3, border_radius=20)
+            self.draw_text("无限随机模式", self.font_large, WHITE, btn_rand.centerx, btn_rand.centery, shadow=False)
+
         elif self.state == "PLAYING":
             current_time = (pygame.time.get_ticks() - self.level_start_time) // 1000 if self.has_started_moving else 0
 
-            self.draw_text(f"关卡: {self.current_level + 1}", self.font_normal, WHITE, 20, 20, "topleft")
+            lvl_text = "无限随机模式" if self.current_level == "RANDOM" else f"关卡: {self.current_level + 1}"
+            self.draw_text(lvl_text, self.font_normal, WHITE, 20, 20, "topleft")
+
             remain = sum(1 for row in self.grid for val in row if val != 0)
             self.draw_text(f"剩余: {remain}", self.font_normal, WHITE, 20, 50, "topleft")
-
             color = (255, 100, 100) if self.mistakes <= 1 else WHITE
             self.draw_text(f"失误: {self.mistakes}", self.font_normal, color, 20, 80, "topleft")
-
             time_color = (255, 150, 150) if current_time > self.target_time else (150, 255, 150)
             self.draw_text(f"用时: {current_time}s / {self.target_time}s", self.font_normal, time_color, 20, 110,
                            "topleft")
@@ -530,9 +541,6 @@ class Game:
             self.screen.blit(overlay, (0, 0))
 
             if self.state == "LEVEL_CLEAR":
-                record = self.level_records[self.current_level]
-                best_stars_str = "★" * record['stars'] + "☆" * (3 - record['stars'])
-
                 self.draw_text("关卡完成！", self.font_title, (100, 255, 100), SCREEN_WIDTH // 2,
                                SCREEN_HEIGHT // 3 - 40)
                 stars_str = "★" * self.earned_stars + "☆" * (3 - self.earned_stars)
@@ -541,25 +549,28 @@ class Game:
                 self.draw_text(f"本次用时: {self.final_time}秒", self.font_normal, WHITE, SCREEN_WIDTH // 2,
                                SCREEN_HEIGHT // 2 + 10)
 
-                # ==== 新增：作弊红字警告，正常则显示最佳记录 ====
-                if self.used_ai:
-                    self.draw_text("使用了 AI 求解，本次成绩不计入历史记录", self.font_normal, (255, 150, 150),
-                                   SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+                if self.current_level == "RANDOM":
+                    self.draw_text("点击屏幕生成新关卡", self.font_large, WHITE, SCREEN_WIDTH // 2,
+                                   SCREEN_HEIGHT // 2 + 90)
+                    self.draw_text("返回大厅请点击左上角", self.font_normal, GRAY, SCREEN_WIDTH // 2,
+                                   SCREEN_HEIGHT // 2 + 130)
                 else:
-                    self.draw_text(f"历史最佳: {best_stars_str}   最快: {record['time']}秒", self.font_normal,
-                                   (200, 255, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
-
-                self.draw_text("点击屏幕进入下一关", self.font_large, WHITE, SCREEN_WIDTH // 2,
-                               SCREEN_HEIGHT // 2 + 110)
+                    record = self.level_records[self.current_level]
+                    best_stars = "★" * record['stars'] + "☆" * (3 - record['stars'])
+                    if self.used_ai:
+                        self.draw_text("使用了 AI 求解，不计入记录", self.font_normal, (255, 150, 150),
+                                       SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+                    else:
+                        self.draw_text(f"历史最佳: {best_stars}   最快: {record['time']}秒", self.font_normal,
+                                       (200, 255, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+                    self.draw_text("点击屏幕进入下一关", self.font_large, WHITE, SCREEN_WIDTH // 2,
+                                   SCREEN_HEIGHT // 2 + 110)
 
             elif self.state == "GAME_OVER":
                 self.draw_text("游戏失败", self.font_title, (255, 80, 80), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 3)
                 self.draw_text("点击屏幕重新挑战本关", self.font_large, WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
 
             elif self.state == "GAME_WON":
-                record = self.level_records[self.current_level]
-                best_stars_str = "★" * record['stars'] + "☆" * (3 - record['stars'])
-
                 self.draw_text("恭喜！全部通关！", self.font_title, (100, 200, 255), SCREEN_WIDTH // 2,
                                SCREEN_HEIGHT // 3 - 40)
                 stars_str = "★" * self.earned_stars + "☆" * (3 - self.earned_stars)
@@ -567,14 +578,6 @@ class Game:
                                SCREEN_HEIGHT // 2 - 30)
                 self.draw_text(f"本次用时: {self.final_time}秒", self.font_normal, WHITE, SCREEN_WIDTH // 2,
                                SCREEN_HEIGHT // 2 + 10)
-
-                if self.used_ai:
-                    self.draw_text("使用了 AI 求解，本次成绩不计入历史记录", self.font_normal, (255, 150, 150),
-                                   SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
-                else:
-                    self.draw_text(f"历史最佳: {best_stars_str}   最快: {record['time']}秒", self.font_normal,
-                                   (200, 255, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
-
                 self.draw_text("点击返回关卡选择", self.font_large, WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 110)
 
         pygame.display.flip()
@@ -603,11 +606,23 @@ class Game:
                     elif self.state == "PLAYING":
                         self.handle_playing_click(event.pos)
                     elif self.state == "LEVEL_CLEAR":
-                        self.current_level += 1
-                        self.load_level(self.current_level)
-                        if self.state != "GAME_WON": self.state = "PLAYING"
+                        if self.current_level == "RANDOM":
+                            # 在结算界面左上角点击可强制退回菜单
+                            if event.pos[0] < 150 and event.pos[1] < 150:
+                                self.state = "LEVEL_SELECT"
+                                self.bg_surface = self.create_background(self.themes[0])
+                            else:
+                                self.init_new_random_level()
+                                self.state = "PLAYING"
+                        else:
+                            self.current_level += 1
+                            self.load_level(self.current_level)
+                            if self.state != "GAME_WON": self.state = "PLAYING"
                     elif self.state == "GAME_OVER":
-                        self.load_level(self.current_level)
+                        if self.current_level == "RANDOM":
+                            self.setup_level_from_data(self.random_level_data, self.random_theme_idx)
+                        else:
+                            self.load_level(self.current_level)
                         self.state = "PLAYING"
                     elif self.state == "GAME_WON":
                         self.state = "LEVEL_SELECT"
@@ -632,8 +647,7 @@ class Game:
                                                   pygame.time.get_ticks() - self.level_start_time) // 1000 if self.has_started_moving else 0
                     self.calculate_stars()
 
-                    # ==== 新增：只有不作弊，才保存成绩 ====
-                    if not self.used_ai:
+                    if self.current_level != "RANDOM" and not self.used_ai:
                         record = self.level_records[self.current_level]
                         if self.earned_stars > record['stars']:
                             record['stars'] = self.earned_stars
@@ -643,7 +657,7 @@ class Game:
                             record['time'] = self.final_time
                             self.save_records()
 
-                    if self.current_level >= len(LEVELS) - 1:
+                    if self.current_level != "RANDOM" and self.current_level >= len(LEVELS) - 1:
                         self.state = "GAME_WON"
                     else:
                         self.state = "LEVEL_CLEAR"
