@@ -160,7 +160,7 @@ class Game:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("一箭又一箭")
+        pygame.display.set_caption("一箭又一箭 - 智能求解版")
         self.clock = pygame.time.Clock()
 
         self.font_title = get_chinese_font(60)
@@ -183,8 +183,9 @@ class Game:
         self.earned_stars = 0
         self.history = []
 
-        # AI 自动求解相关
+        # AI 自动求解与作弊判定
         self.is_auto_playing = False
+        self.used_ai = False  # <--- 新增：作弊标记
         self.auto_path = []
         self.last_auto_move_time = 0
         self.no_solution_msg_timer = 0
@@ -248,11 +249,11 @@ class Game:
         self.has_started_moving = False
         self.history = []
         self.is_auto_playing = False
+        self.used_ai = False  # 加载关卡时，重置作弊标记
         self.auto_path = []
         self.no_solution_msg_timer = 0
 
     def check_path_clear(self, r, c, dir_type, custom_grid=None):
-        """支持传入虚拟网格以供 DFS 使用，未传入则使用真实网格"""
         grid = custom_grid if custom_grid else self.grid
         dr, dc = DIR_MAP[dir_type]
         curr_r, curr_c = r + dr, c + dc
@@ -269,45 +270,35 @@ class Game:
         if self.final_time > self.target_time: stars -= 1
         self.earned_stars = max(1, stars)
 
-    # ================= 核心 AI 搜索算法 (DFS) =================
     def get_solution(self):
-        """利用深度优先搜索计算当前盘面的通关序列"""
-        # 深拷贝当前逻辑网格，防止弄脏画面
         temp_grid = [[self.grid[r][c] for c in range(self.cols)] for r in range(self.rows)]
 
         def dfs(grid, path):
-            # 找到所有仍在场上的箭头
             arrows = [(r, c, grid[r][c]) for r in range(self.rows) for c in range(self.cols) if grid[r][c] != 0]
-            if not arrows: return path  # 清空完成，返回成功路径
-
-            # 找出当前步骤下没有阻挡的候选箭头
+            if not arrows: return path
             valid_moves = [(r, c, d) for (r, c, d) in arrows if self.check_path_clear(r, c, d, grid)]
-            if not valid_moves: return None  # 发生死锁，回溯
-
-            # 模拟执行
+            if not valid_moves: return None
             for r, c, d in valid_moves:
                 grid[r][c] = 0
                 res = dfs(grid, path + [(r, c)])
-                if res: return res  # 找到一条路就一路往上抛出
-                grid[r][c] = d  # 回溯：恢复棋子
-
+                if res: return res
+                grid[r][c] = d
             return None
 
         return dfs(temp_grid, [])
 
     def start_ai_solver(self):
-        """触发 AI 求解"""
-        if self.is_auto_playing: return  # 正在自动玩就忽略
+        if self.is_auto_playing: return
 
+        self.used_ai = True  # <--- 只要点过 AI 求解，本局成绩作废
         solution = self.get_solution()
+
         if solution:
             self.auto_path = solution
             self.is_auto_playing = True
             self.last_auto_move_time = pygame.time.get_ticks()
-            # 隐藏之前的提示高亮
             for a in self.arrows: a.is_hinted = False
         else:
-            # 如果算不出解，显示 3 秒的警告信息
             self.no_solution_msg_timer = pygame.time.get_ticks() + 3000
 
     def trigger_hint(self):
@@ -332,7 +323,7 @@ class Game:
     def undo(self):
         if not self.history: return
         last_state = self.history.pop()
-        self.is_auto_playing = False  # 撤销会打断自动播放
+        self.is_auto_playing = False
         self.no_solution_msg_timer = 0
 
         self.mistakes = last_state["mistakes"]
@@ -351,9 +342,7 @@ class Game:
             self.level_start_time = 0
 
     def trigger_arrow(self, grid_r, grid_c):
-        """抽离出的点击逻辑，供鼠标和 AI 共用"""
-        for a in self.arrows: a.is_hinted = False  # 交互后消除高亮
-
+        for a in self.arrows: a.is_hinted = False
         for arrow in self.arrows:
             if arrow.r == grid_r and arrow.c == grid_c and arrow.state == "idle":
                 self.save_history()
@@ -368,7 +357,7 @@ class Game:
                     arrow.state = "shaking"
                     arrow.shake_timer = 20
                     self.mistakes -= 1
-                    self.is_auto_playing = False  # 发生失误停止自动播放
+                    self.is_auto_playing = False
                     if self.mistakes <= 0: self.state = "GAME_OVER"
                 break
 
@@ -379,7 +368,8 @@ class Game:
 
         for i in range(len(LEVELS)):
             row, col = i // cols, i % cols
-            bx, by = start_x + col * (btn_w + spacing_x), start_y + row * (btn_h + spacing_y)
+            bx = start_x + col * (btn_w + spacing_x)
+            by = start_y + row * (btn_h + spacing_y)
             rect = pygame.Rect(bx, by, btn_w, btn_h)
             if rect.collidepoint(pos):
                 self.current_level = i
@@ -388,13 +378,11 @@ class Game:
                 return
 
     def handle_playing_click(self, pos):
-        # 如果正在自动播放，玩家点击任何地方都会强行打断 AI
         if self.is_auto_playing:
             self.is_auto_playing = False
             return
 
         btn_w = 55
-        btn_gap = 10
         btn_ai = pygame.Rect(SCREEN_WIDTH - 75, 20, btn_w, 40)
         btn_hint = pygame.Rect(SCREEN_WIDTH - 145, 20, btn_w, 40)
         btn_undo = pygame.Rect(SCREEN_WIDTH - 215, 20, btn_w, 40)
@@ -486,11 +474,9 @@ class Game:
             self.draw_text(f"用时: {current_time}s / {self.target_time}s", self.font_normal, time_color, 20, 110,
                            "topleft")
 
-            # AI播放状态显示
             if self.is_auto_playing:
                 self.draw_text("AI 正在自动解局...", self.font_large, (100, 255, 100), SCREEN_WIDTH // 2,
                                SCREEN_HEIGHT - 60)
-            # 无解警告显示
             if pygame.time.get_ticks() < self.no_solution_msg_timer:
                 self.draw_text("当前死锁无解，请撤销！", self.font_large, (255, 80, 80), SCREEN_WIDTH // 2,
                                SCREEN_HEIGHT - 60)
@@ -554,8 +540,15 @@ class Game:
                                SCREEN_HEIGHT // 2 - 30)
                 self.draw_text(f"本次用时: {self.final_time}秒", self.font_normal, WHITE, SCREEN_WIDTH // 2,
                                SCREEN_HEIGHT // 2 + 10)
-                self.draw_text(f"历史最佳: {best_stars_str}   最快: {record['time']}秒", self.font_normal,
-                               (200, 255, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+
+                # ==== 新增：作弊红字警告，正常则显示最佳记录 ====
+                if self.used_ai:
+                    self.draw_text("使用了 AI 求解，本次成绩不计入历史记录", self.font_normal, (255, 150, 150),
+                                   SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+                else:
+                    self.draw_text(f"历史最佳: {best_stars_str}   最快: {record['time']}秒", self.font_normal,
+                                   (200, 255, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+
                 self.draw_text("点击屏幕进入下一关", self.font_large, WHITE, SCREEN_WIDTH // 2,
                                SCREEN_HEIGHT // 2 + 110)
 
@@ -574,8 +567,14 @@ class Game:
                                SCREEN_HEIGHT // 2 - 30)
                 self.draw_text(f"本次用时: {self.final_time}秒", self.font_normal, WHITE, SCREEN_WIDTH // 2,
                                SCREEN_HEIGHT // 2 + 10)
-                self.draw_text(f"历史最佳: {best_stars_str}   最快: {record['time']}秒", self.font_normal,
-                               (200, 255, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+
+                if self.used_ai:
+                    self.draw_text("使用了 AI 求解，本次成绩不计入历史记录", self.font_normal, (255, 150, 150),
+                                   SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+                else:
+                    self.draw_text(f"历史最佳: {best_stars_str}   最快: {record['time']}秒", self.font_normal,
+                                   (200, 255, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+
                 self.draw_text("点击返回关卡选择", self.font_large, WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 110)
 
         pygame.display.flip()
@@ -615,13 +614,11 @@ class Game:
                         self.bg_surface = self.create_background(self.themes[0])
 
             if self.state == "PLAYING":
-                # AI 自动播放逻辑
                 if self.is_auto_playing and self.auto_path:
-                    # 只有当没有任何箭头处于飞出/晃动状态时，AI 才进行下一步
                     is_animating = any(a.state != "idle" for a in self.arrows)
                     if not is_animating:
                         current_ticks = pygame.time.get_ticks()
-                        if current_ticks - self.last_auto_move_time > 200:  # 留 0.2 秒延时增加观赏性
+                        if current_ticks - self.last_auto_move_time > 200:
                             next_r, next_c = self.auto_path.pop(0)
                             self.trigger_arrow(next_r, next_c)
                             self.last_auto_move_time = current_ticks
@@ -635,14 +632,16 @@ class Game:
                                                   pygame.time.get_ticks() - self.level_start_time) // 1000 if self.has_started_moving else 0
                     self.calculate_stars()
 
-                    record = self.level_records[self.current_level]
-                    if self.earned_stars > record['stars']:
-                        record['stars'] = self.earned_stars
-                        record['time'] = self.final_time
-                        self.save_records()
-                    elif self.earned_stars == record['stars'] and self.final_time < record['time']:
-                        record['time'] = self.final_time
-                        self.save_records()
+                    # ==== 新增：只有不作弊，才保存成绩 ====
+                    if not self.used_ai:
+                        record = self.level_records[self.current_level]
+                        if self.earned_stars > record['stars']:
+                            record['stars'] = self.earned_stars
+                            record['time'] = self.final_time
+                            self.save_records()
+                        elif self.earned_stars == record['stars'] and self.final_time < record['time']:
+                            record['time'] = self.final_time
+                            self.save_records()
 
                     if self.current_level >= len(LEVELS) - 1:
                         self.state = "GAME_WON"
