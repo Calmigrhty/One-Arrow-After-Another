@@ -1,3 +1,0 @@
-([('main',
-   '/Users/apple/PycharmProjects/Homework/One_Arrow_After_Another/dist/main',
-   'EXECUTABLE')],)
