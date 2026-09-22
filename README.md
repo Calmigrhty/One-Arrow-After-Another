@@ -22,11 +22,12 @@
 本项目采用高内聚、低耦合的模块化设计，核心代码结构如下：
 ```text
 📦 One_Arrow_After_Another
- ┣ 📜 main.py          # 游戏主循环、事件监听与状态机控制模块
- ┣ 📜 arrows.py        # Arrow 实体类、运动学更新与多边形渲染逻辑
- ┣ 📜 configs.py       # 全局常量、矩阵关卡数据与 UI 调色板配置
- ┣ 📜 README.md        # 项目说明文档
- ┗ 📦 main.app.zip     # macOS 平台专属独立运行包 (Release)
+ ┣ 📜 main.py            # 游戏主循环、事件监听与状态机控制模块
+ ┣ 📜 arrows.py          # Arrow 实体类、运动学更新与多边形渲染逻辑
+ ┣ 📜 configs.py         # 全局常量、矩阵关卡数据与 UI 调色板配置
+ ┣ 📜 README.md          # 项目说明文档
+ ┣ 📜 requirements.txt   # 项目依赖文档
+ ┗ 📦 main.app.zip       # macOS 平台专属独立运行包 (Release)
 ```
 
 ## 4. 开发环境
