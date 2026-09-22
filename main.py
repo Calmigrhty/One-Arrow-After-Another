@@ -145,29 +145,90 @@ class Game:
         self.last_auto_move_time = 0
         self.no_solution_msg_timer = 0
 
-        # 随机模式专属数据
         self.random_level_data = None
         self.random_theme_idx = 0
 
         self.level_records = [{'stars': 0, 'time': 999} for _ in range(len(LEVELS))]
+        self.saved_progress = None
         self.load_records()
 
     def load_records(self):
+        self.saved_progress = None
         if os.path.exists(SAVE_FILE):
             try:
                 with open(SAVE_FILE, 'r') as f:
                     data = json.load(f)
-                    for i in range(min(len(self.level_records), len(data))):
-                        self.level_records[i] = data[i]
+                    if isinstance(data, dict):
+                        records = data.get("records", [])
+                        for i in range(min(len(self.level_records), len(records))):
+                            self.level_records[i] = records[i]
+                        self.saved_progress = data.get("progress")
+                    elif isinstance(data, list):
+                        for i in range(min(len(self.level_records), len(data))):
+                            self.level_records[i] = data[i]
             except:
                 pass
 
-    def save_records(self):
+    def save_all_data(self):
+        progress = None
+        if self.state == "PLAYING" and self.current_level != "RANDOM":
+            elapsed = (pygame.time.get_ticks() - self.level_start_time) // 1000 if self.has_started_moving else 0
+            progress = {
+                "level": self.current_level,
+                "mistakes": self.mistakes,
+                "elapsed_time": elapsed,
+                "has_started_moving": self.has_started_moving,
+                "used_ai": self.used_ai,
+                "grid": self.grid,
+                "arrows": [{"r": a.r, "c": a.c, "dir_type": a.dir_type, "color": list(a.color)} for a in self.arrows if
+                           not a.is_dead],
+                "history": self.history
+            }
+
+        data = {"records": self.level_records, "progress": progress}
         try:
             with open(SAVE_FILE, 'w') as f:
-                json.dump(self.level_records, f)
+                json.dump(data, f)
         except:
             pass
+
+    def resume_progress(self):
+        try:
+            p = self.saved_progress
+            self.current_level = p["level"]
+            theme_idx = self.current_level % len(self.themes)
+            self.bg_surface = self.create_background(self.themes[theme_idx])
+
+            lvl = LEVELS[self.current_level]
+            self.rows, self.cols = len(lvl["grid"]), len(lvl["grid"][0])
+            self.max_mistakes = lvl["mistakes"]
+            self.target_time = lvl["target_time"]
+            self.offset_x = (SCREEN_WIDTH - self.cols * GRID_SIZE) // 2
+            self.offset_y = (SCREEN_HEIGHT - self.rows * GRID_SIZE) // 2 + 50
+
+            self.grid = p["grid"]
+            self.mistakes = p["mistakes"]
+            self.history = p["history"]
+            self.has_started_moving = p["has_started_moving"]
+            self.used_ai = p.get("used_ai", False)
+
+            if self.has_started_moving:
+                self.level_start_time = pygame.time.get_ticks() - p["elapsed_time"] * 1000
+            else:
+                self.level_start_time = 0
+
+            self.arrows = []
+            for a_data in p["arrows"]:
+                arr = Arrow(a_data["r"], a_data["c"], a_data["dir_type"])
+                arr.color = tuple(a_data["color"])
+                self.arrows.append(arr)
+
+            self.state = "PLAYING"
+            self.is_auto_playing = False
+            self.auto_path = []
+        except:
+            self.state = "LEVEL_SELECT"
+        self.saved_progress = None
 
     def create_background(self, theme):
         bg = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -212,12 +273,10 @@ class Game:
         self.setup_level_from_data(LEVELS[level_idx], level_idx % len(self.themes))
 
     def init_new_random_level(self):
-        """核心算法：逆向时间生成法，保证关卡 100% 绝对有解"""
         self.current_level = "RANDOM"
-        # 将行数限制在 4 到 5 行，防止棋盘过长挡住底部文字
         rows = random.randint(4, 5)
         cols = random.randint(5, 6)
-        difficulty = random.randint(10, rows * cols - 5)  # 稍微调整箭头生成数量下限
+        difficulty = random.randint(10, rows * cols - 5)
 
         grid = [[0 for _ in range(cols)] for _ in range(rows)]
         placed = 0
@@ -307,7 +366,7 @@ class Game:
         for a in self.arrows:
             state["arrows"].append({
                 "r": a.r, "c": a.c, "dir_type": a.dir_type, "x": a.x, "y": a.y,
-                "state": a.state, "is_dead": a.is_dead, "color": a.color, "is_hinted": a.is_hinted
+                "state": a.state, "is_dead": a.is_dead, "color": list(a.color), "is_hinted": a.is_hinted
             })
         self.history.append(state)
 
@@ -325,7 +384,7 @@ class Game:
             new_arrow = Arrow(a_data["r"], a_data["c"], a_data["dir_type"])
             new_arrow.x, new_arrow.y = a_data["x"], a_data["y"]
             new_arrow.state, new_arrow.is_dead = a_data["state"], a_data["is_dead"]
-            new_arrow.color, new_arrow.is_hinted = a_data["color"], a_data["is_hinted"]
+            new_arrow.color, new_arrow.is_hinted = tuple(a_data["color"]), a_data["is_hinted"]
             self.arrows.append(new_arrow)
 
         if len(self.history) == 0:
@@ -367,7 +426,6 @@ class Game:
                 self.state = "PLAYING"
                 return
 
-        # 监听无限模式按钮点击
         btn_rand_w, btn_rand_h = 250, 60
         btn_rand = pygame.Rect((SCREEN_WIDTH - btn_rand_w) // 2, 530, btn_rand_w, btn_rand_h)
         if btn_rand.collidepoint(pos):
@@ -390,7 +448,10 @@ class Game:
         if btn_hint.collidepoint(pos): self.trigger_hint(); return
         if btn_undo.collidepoint(pos): self.undo(); return
         if btn_menu.collidepoint(pos):
+            # 点菜单返回大厅前，先自动保存当前进度
+            self.save_all_data()
             self.state = "LEVEL_SELECT"
+            self.load_records()  # 刷新存档状态
             self.bg_surface = self.create_background(self.themes[0])
             return
 
@@ -435,7 +496,21 @@ class Game:
 
         if self.state == "START":
             self.draw_text("一箭又一箭", self.font_title, WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 3 - 30)
-            self.draw_text("点击屏幕开始", self.font_large, GRAY, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 30)
+
+            if self.saved_progress:
+                btn_resume = pygame.Rect(SCREEN_WIDTH // 2 - 80, SCREEN_HEIGHT // 2 - 20, 160, 50)
+                pygame.draw.rect(self.screen, (70, 130, 180), btn_resume, border_radius=25)
+                pygame.draw.rect(self.screen, WHITE, btn_resume, width=2, border_radius=25)
+                # 使用 font_normal 正常字号，彻底解决撑破格子的问题
+                self.draw_text("继续游戏", self.font_normal, WHITE, btn_resume.centerx, btn_resume.centery,
+                               shadow=False)
+
+                btn_new = pygame.Rect(SCREEN_WIDTH // 2 - 80, SCREEN_HEIGHT // 2 + 60, 160, 50)
+                pygame.draw.rect(self.screen, (200, 80, 80), btn_new, border_radius=25)
+                pygame.draw.rect(self.screen, WHITE, btn_new, width=2, border_radius=25)
+                self.draw_text("重新开始", self.font_normal, WHITE, btn_new.centerx, btn_new.centery, shadow=False)
+            else:
+                self.draw_text("点击屏幕开始", self.font_large, GRAY, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 30)
 
         elif self.state == "LEVEL_SELECT":
             self.draw_text("选择关卡", self.font_title, WHITE, SCREEN_WIDTH // 2, 80)
@@ -463,7 +538,6 @@ class Game:
                 else:
                     self.draw_text("未通关", self.font_normal, GRAY, rect.centerx, rect.bottom + 25)
 
-            # 绘制随机模式按钮
             btn_rand_w, btn_rand_h = 250, 60
             btn_rand = pygame.Rect((SCREEN_WIDTH - btn_rand_w) // 2, 530, btn_rand_w, btn_rand_h)
             rand_color = (255, 120, 120) if btn_rand.collidepoint((mx, my)) else (200, 80, 80)
@@ -586,6 +660,7 @@ class Game:
         while True:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
+                    self.save_all_data()
                     pygame.quit()
                     sys.exit()
 
@@ -600,14 +675,22 @@ class Game:
 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if self.state == "START":
-                        self.state = "LEVEL_SELECT"
+                        if self.saved_progress:
+                            btn_resume = pygame.Rect(SCREEN_WIDTH // 2 - 80, SCREEN_HEIGHT // 2 - 20, 160, 50)
+                            btn_new = pygame.Rect(SCREEN_WIDTH // 2 - 80, SCREEN_HEIGHT // 2 + 60, 160, 50)
+                            if btn_resume.collidepoint(event.pos):
+                                self.resume_progress()
+                            elif btn_new.collidepoint(event.pos):
+                                self.saved_progress = None
+                                self.state = "LEVEL_SELECT"
+                        else:
+                            self.state = "LEVEL_SELECT"
                     elif self.state == "LEVEL_SELECT":
                         self.handle_level_select_click(event.pos)
                     elif self.state == "PLAYING":
                         self.handle_playing_click(event.pos)
                     elif self.state == "LEVEL_CLEAR":
                         if self.current_level == "RANDOM":
-                            # 在结算界面左上角点击可强制退回菜单
                             if event.pos[0] < 150 and event.pos[1] < 150:
                                 self.state = "LEVEL_SELECT"
                                 self.bg_surface = self.create_background(self.themes[0])
@@ -652,10 +735,10 @@ class Game:
                         if self.earned_stars > record['stars']:
                             record['stars'] = self.earned_stars
                             record['time'] = self.final_time
-                            self.save_records()
+                            self.save_all_data()
                         elif self.earned_stars == record['stars'] and self.final_time < record['time']:
                             record['time'] = self.final_time
-                            self.save_records()
+                            self.save_all_data()
 
                     if self.current_level != "RANDOM" and self.current_level >= len(LEVELS) - 1:
                         self.state = "GAME_WON"
