@@ -29,7 +29,7 @@ LEVELS = [
             [0, 0, 2, 0]
         ],
         "mistakes": 3,
-        "target_time": 10
+        "target_time": 30
     },
     {
         "grid": [
@@ -39,7 +39,7 @@ LEVELS = [
             [0, 3, 1, 2]
         ],
         "mistakes": 4,
-        "target_time": 15
+        "target_time": 45
     },
     {
         "grid": [
@@ -49,7 +49,7 @@ LEVELS = [
             [4, 2, 1, 1]
         ],
         "mistakes": 5,
-        "target_time": 20
+        "target_time": 50
     },
     {
         "grid": [
@@ -59,7 +59,7 @@ LEVELS = [
             [1, 1, 1, 1]
         ],
         "mistakes": 3,
-        "target_time": 15
+        "target_time": 45
     },
     {
         "grid": [
@@ -70,7 +70,7 @@ LEVELS = [
             [0, 2, 2, 2, 0]
         ],
         "mistakes": 5,
-        "target_time": 25
+        "target_time": 60
     }
 ]
 
@@ -102,6 +102,7 @@ class Arrow:
         self.shake_timer = 0
         self.speed = 20
         self.is_dead = False
+        self.is_hinted = False  # 新增：是否处于提示高亮状态
         self.color = (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
 
     def update(self):
@@ -125,6 +126,13 @@ class Arrow:
                 draw_x += shake_amt
             else:
                 draw_y += shake_amt
+
+        # 新增：绘制提示的发光边框 (使用正弦波做呼吸效果)
+        if self.is_hinted:
+            pulse = (math.sin(pygame.time.get_ticks() / 200) + 1) / 2  # 0 到 1 之间波动
+            glow_color = (255, int(200 + 55 * pulse), 0)  # 从橙金到亮黄变化
+            glow_rect = pygame.Rect(draw_x + 2, draw_y + 2, GRID_SIZE - 4, GRID_SIZE - 4)
+            pygame.draw.rect(surface, glow_color, glow_rect, width=4, border_radius=12)
 
         cx, cy = draw_x + GRID_SIZE // 2, draw_y + GRID_SIZE // 2
         shaft_len, shaft_thick, head_len, head_wide, neck = 16, 6, 18, 15, 4
@@ -172,13 +180,13 @@ class Game:
         self.bg_surface = self.create_background(self.themes[0])
 
         self.level_start_time = 0
+        self.has_started_moving = False
         self.final_time = 0
         self.earned_stars = 0
+        self.history = []
 
-        # 存档与历史记录
         self.level_records = [{'stars': 0, 'time': 999} for _ in range(len(LEVELS))]
         self.load_records()
-        self.history = []  # 动作历史栈（用于撤销）
 
     def load_records(self):
         if os.path.exists(SAVE_FILE):
@@ -232,40 +240,9 @@ class Game:
             for c in range(self.cols):
                 if self.grid[r][c] != 0: self.arrows.append(Arrow(r, c, self.grid[r][c]))
 
-        self.level_start_time = pygame.time.get_ticks()
-        self.history.clear()  # 进入新关卡时清空撤销栈
-
-    def snapshot(self):
-        """保存当前盘面状态到历史栈"""
-        state = {
-            'grid': [[val for val in row] for row in self.grid],
-            'mistakes': self.mistakes,
-            'arrows': [
-                {
-                    'r': a.r, 'c': a.c, 'dir': a.dir_type,
-                    'x': a.x, 'y': a.y, 'state': a.state,
-                    'is_dead': a.is_dead, 'color': a.color
-                } for a in self.arrows
-            ]
-        }
-        self.history.append(state)
-
-    def undo(self):
-        """撤销上一步操作"""
-        if not self.history:
-            return  # 栈为空，无法撤销
-
-        state = self.history.pop()
-        self.grid = [[val for val in row] for row in state['grid']]
-        self.mistakes = state['mistakes']
-        self.arrows = []
-        for adata in state['arrows']:
-            a = Arrow(adata['r'], adata['c'], adata['dir'])
-            a.x, a.y = adata['x'], adata['y']
-            a.state = adata['state']
-            a.is_dead = adata['is_dead']
-            a.color = adata['color']
-            self.arrows.append(a)
+        self.level_start_time = 0
+        self.has_started_moving = False
+        self.history = []
 
     def check_path_clear(self, r, c, dir_type):
         dr, dc = DIR_MAP[dir_type]
@@ -278,13 +255,62 @@ class Game:
 
     def calculate_stars(self):
         stars = 3
-        if self.mistakes < self.max_mistakes: stars -= 1
+        mistakes_made = self.max_mistakes - self.mistakes
+        if mistakes_made > 1: stars -= 1
         if self.final_time > self.target_time: stars -= 1
         self.earned_stars = max(1, stars)
 
+    def trigger_hint(self):
+        """核心逻辑：寻找一个当前可以直接飞出的箭头并标记高亮"""
+        # 寻找所有可消除的箭头
+        valid_arrows = []
+        for arrow in self.arrows:
+            if arrow.state == "idle" and self.check_path_clear(arrow.r, arrow.c, arrow.dir_type):
+                valid_arrows.append(arrow)
+
+        # 随机挑选一个给它发光提示
+        if valid_arrows:
+            hint_arrow = random.choice(valid_arrows)
+            hint_arrow.is_hinted = True
+
+    def save_history(self):
+        state = {
+            "mistakes": self.mistakes,
+            "grid": [[self.grid[r][c] for c in range(self.cols)] for r in range(self.rows)],
+            "arrows": []
+        }
+        for a in self.arrows:
+            state["arrows"].append({
+                "r": a.r, "c": a.c, "dir_type": a.dir_type,
+                "x": a.x, "y": a.y,
+                "state": a.state, "is_dead": a.is_dead, "color": a.color, "is_hinted": a.is_hinted
+            })
+        self.history.append(state)
+
+    def undo(self):
+        if not self.history: return
+        last_state = self.history.pop()
+
+        self.mistakes = last_state["mistakes"]
+        self.grid = [[last_state["grid"][r][c] for c in range(self.cols)] for r in range(self.rows)]
+
+        self.arrows = []
+        for a_data in last_state["arrows"]:
+            new_arrow = Arrow(a_data["r"], a_data["c"], a_data["dir_type"])
+            new_arrow.x = a_data["x"]
+            new_arrow.y = a_data["y"]
+            new_arrow.state = a_data["state"]
+            new_arrow.is_dead = a_data["is_dead"]
+            new_arrow.color = a_data["color"]
+            new_arrow.is_hinted = a_data["is_hinted"]
+            self.arrows.append(new_arrow)
+
+        if len(self.history) == 0:
+            self.has_started_moving = False
+            self.level_start_time = 0
+
     def handle_level_select_click(self, pos):
-        btn_w, btn_h = 100, 100
-        spacing_x, spacing_y, cols = 50, 70, 3
+        btn_w, btn_h, spacing_x, spacing_y, cols = 100, 100, 50, 70, 3
         start_x = (SCREEN_WIDTH - (cols * btn_w + (cols - 1) * spacing_x)) // 2
         start_y = 160
 
@@ -300,11 +326,18 @@ class Game:
                 return
 
     def handle_playing_click(self, pos):
-        # 调整后的三个按钮区域
-        btn_restart = pygame.Rect(SCREEN_WIDTH - 90, 20, 70, 40)
-        btn_menu = pygame.Rect(SCREEN_WIDTH - 170, 20, 70, 40)
-        btn_undo = pygame.Rect(SCREEN_WIDTH - 250, 20, 70, 40)
+        # 按钮重新排列，更紧凑
+        btn_hint = pygame.Rect(SCREEN_WIDTH - 90, 20, 70, 40)
+        btn_undo = pygame.Rect(SCREEN_WIDTH - 170, 20, 70, 40)
+        btn_restart = pygame.Rect(SCREEN_WIDTH - 250, 20, 70, 40)
+        btn_menu = pygame.Rect(SCREEN_WIDTH - 330, 20, 70, 40)
 
+        if btn_hint.collidepoint(pos):
+            self.trigger_hint()
+            return
+        if btn_undo.collidepoint(pos):
+            self.undo()
+            return
         if btn_restart.collidepoint(pos):
             self.load_level(self.current_level)
             return
@@ -312,18 +345,24 @@ class Game:
             self.state = "LEVEL_SELECT"
             self.bg_surface = self.create_background(self.themes[0])
             return
-        if btn_undo.collidepoint(pos):
-            self.undo()
-            return
 
         mx, my = pos
         grid_c, grid_r = int((mx - self.offset_x) // GRID_SIZE), int((my - self.offset_y) // GRID_SIZE)
 
         if 0 <= grid_r < self.rows and 0 <= grid_c < self.cols:
             if self.grid[grid_r][grid_c] != 0:
+                # 无论点对点错，都清除棋盘上所有的高亮提示
+                for a in self.arrows:
+                    a.is_hinted = False
+
                 for arrow in self.arrows:
                     if arrow.r == grid_r and arrow.c == grid_c and arrow.state == "idle":
-                        self.snapshot()  # 在产生动作前，进行快照存档
+                        self.save_history()
+
+                        if not self.has_started_moving:
+                            self.has_started_moving = True
+                            self.level_start_time = pygame.time.get_ticks()
+
                         if self.check_path_clear(grid_r, grid_c, arrow.dir_type):
                             arrow.state = "flying"
                             self.grid[grid_r][grid_c] = 0
@@ -391,37 +430,44 @@ class Game:
                     self.draw_text("未通关", self.font_normal, GRAY, rect.centerx, rect.bottom + 25)
 
         elif self.state == "PLAYING":
-            current_time = (pygame.time.get_ticks() - self.level_start_time) // 1000
+            if self.has_started_moving:
+                current_time = (pygame.time.get_ticks() - self.level_start_time) // 1000
+            else:
+                current_time = 0
 
             self.draw_text(f"⭐ 关卡: {self.current_level + 1}", self.font_normal, WHITE, 20, 20, "topleft")
             remain = sum(1 for row in self.grid for val in row if val != 0)
-            self.draw_text(f"🏹 剩余箭头: {remain}", self.font_normal, WHITE, 20, 50, "topleft")
+            self.draw_text(f"🏹 剩余: {remain}", self.font_normal, WHITE, 20, 50, "topleft")
 
             color = (255, 100, 100) if self.mistakes <= 1 else WHITE
-            self.draw_text(f"❤️ 剩余失误: {self.mistakes}", self.font_normal, color, 20, 80, "topleft")
+            self.draw_text(f"❤️ 失误: {self.mistakes}", self.font_normal, color, 20, 80, "topleft")
 
             time_color = (255, 150, 150) if current_time > self.target_time else (150, 255, 150)
             self.draw_text(f"⏳ 用时: {current_time}s / {self.target_time}s", self.font_normal, time_color, 20, 110,
                            "topleft")
 
-            # 绘制撤销按钮 (如果历史记录为空，置灰显示)
-            btn_undo = pygame.Rect(SCREEN_WIDTH - 250, 20, 70, 40)
-            undo_color = (130, 100, 150) if len(self.history) > 0 else (100, 100, 100)
+            # 4个控制按钮水平排列
+            btn_hint = pygame.Rect(SCREEN_WIDTH - 90, 20, 70, 40)
+            pygame.draw.rect(self.screen, (70, 130, 180), btn_hint, border_radius=15)
+            pygame.draw.rect(self.screen, WHITE, btn_hint, width=2, border_radius=15)
+            self.draw_text("提示", self.font_normal, WHITE, btn_hint.centerx, btn_hint.centery, shadow=False)
+
+            btn_undo = pygame.Rect(SCREEN_WIDTH - 170, 20, 70, 40)
+            undo_color = (70, 130, 180) if self.history else (100, 100, 100)
             pygame.draw.rect(self.screen, undo_color, btn_undo, border_radius=15)
             pygame.draw.rect(self.screen, WHITE, btn_undo, width=2, border_radius=15)
-            self.draw_text("撤销", self.font_normal, WHITE, btn_undo.centerx, btn_undo.centery, shadow=False)
+            self.draw_text("撤销", self.font_normal, WHITE if self.history else GRAY, btn_undo.centerx,
+                           btn_undo.centery, shadow=False)
 
-            # 绘制菜单按钮
-            btn_menu = pygame.Rect(SCREEN_WIDTH - 170, 20, 70, 40)
-            pygame.draw.rect(self.screen, (100, 100, 120), btn_menu, border_radius=15)
-            pygame.draw.rect(self.screen, WHITE, btn_menu, width=2, border_radius=15)
-            self.draw_text("菜单", self.font_normal, WHITE, btn_menu.centerx, btn_menu.centery, shadow=False)
-
-            # 绘制重试按钮
-            btn_restart = pygame.Rect(SCREEN_WIDTH - 90, 20, 70, 40)
+            btn_restart = pygame.Rect(SCREEN_WIDTH - 250, 20, 70, 40)
             pygame.draw.rect(self.screen, (70, 130, 180), btn_restart, border_radius=15)
             pygame.draw.rect(self.screen, WHITE, btn_restart, width=2, border_radius=15)
             self.draw_text("重试", self.font_normal, WHITE, btn_restart.centerx, btn_restart.centery, shadow=False)
+
+            btn_menu = pygame.Rect(SCREEN_WIDTH - 330, 20, 70, 40)
+            pygame.draw.rect(self.screen, (100, 100, 120), btn_menu, border_radius=15)
+            pygame.draw.rect(self.screen, WHITE, btn_menu, width=2, border_radius=15)
+            self.draw_text("菜单", self.font_normal, WHITE, btn_menu.centerx, btn_menu.centery, shadow=False)
 
             board_rect = pygame.Rect(self.offset_x - 10, self.offset_y - 10, self.cols * GRID_SIZE + 20,
                                      self.rows * GRID_SIZE + 20)
@@ -442,24 +488,39 @@ class Game:
             self.screen.blit(overlay, (0, 0))
 
             if self.state == "LEVEL_CLEAR":
+                record = self.level_records[self.current_level]
+                best_stars_str = "★" * record['stars'] + "☆" * (3 - record['stars'])
+
                 self.draw_text("关卡完成！", self.font_title, (100, 255, 100), SCREEN_WIDTH // 2,
-                               SCREEN_HEIGHT // 3 - 30)
+                               SCREEN_HEIGHT // 3 - 40)
                 stars_str = "★" * self.earned_stars + "☆" * (3 - self.earned_stars)
-                self.draw_text(stars_str, self.font_title, (255, 215, 0), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 20)
-                self.draw_text(f"通关用时: {self.final_time}秒", self.font_normal, WHITE, SCREEN_WIDTH // 2,
-                               SCREEN_HEIGHT // 2 + 30)
-                self.draw_text("点击屏幕进入下一关", self.font_large, WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 80)
+                self.draw_text(f"本次评分: {stars_str}", self.font_large, (255, 215, 0), SCREEN_WIDTH // 2,
+                               SCREEN_HEIGHT // 2 - 30)
+                self.draw_text(f"本次用时: {self.final_time}秒", self.font_normal, WHITE, SCREEN_WIDTH // 2,
+                               SCREEN_HEIGHT // 2 + 10)
+                self.draw_text(f"历史最佳: {best_stars_str}   最快: {record['time']}秒", self.font_normal,
+                               (200, 255, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+                self.draw_text("点击屏幕进入下一关", self.font_large, WHITE, SCREEN_WIDTH // 2,
+                               SCREEN_HEIGHT // 2 + 110)
+
             elif self.state == "GAME_OVER":
                 self.draw_text("游戏失败", self.font_title, (255, 80, 80), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 3)
                 self.draw_text("点击屏幕重新挑战本关", self.font_large, WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
+
             elif self.state == "GAME_WON":
+                record = self.level_records[self.current_level]
+                best_stars_str = "★" * record['stars'] + "☆" * (3 - record['stars'])
+
                 self.draw_text("恭喜！全部通关！", self.font_title, (100, 200, 255), SCREEN_WIDTH // 2,
-                               SCREEN_HEIGHT // 3 - 30)
+                               SCREEN_HEIGHT // 3 - 40)
                 stars_str = "★" * self.earned_stars + "☆" * (3 - self.earned_stars)
-                self.draw_text(stars_str, self.font_title, (255, 215, 0), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 20)
-                self.draw_text(f"最终用时: {self.final_time}秒", self.font_normal, WHITE, SCREEN_WIDTH // 2,
-                               SCREEN_HEIGHT // 2 + 30)
-                self.draw_text("点击返回关卡选择", self.font_large, WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 80)
+                self.draw_text(f"本次评分: {stars_str}", self.font_large, (255, 215, 0), SCREEN_WIDTH // 2,
+                               SCREEN_HEIGHT // 2 - 30)
+                self.draw_text(f"本次用时: {self.final_time}秒", self.font_normal, WHITE, SCREEN_WIDTH // 2,
+                               SCREEN_HEIGHT // 2 + 10)
+                self.draw_text(f"历史最佳: {best_stars_str}   最快: {record['time']}秒", self.font_normal,
+                               (200, 255, 200), SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50)
+                self.draw_text("点击返回关卡选择", self.font_large, WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 110)
 
         pygame.display.flip()
 
@@ -470,10 +531,13 @@ class Game:
                     pygame.quit()
                     sys.exit()
 
-                # 键盘 Z 键也可以触发撤销
+                # 支持按快捷键：Z(撤销)，H(提示)
                 if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_z and self.state == "PLAYING":
-                        self.undo()
+                    if self.state == "PLAYING":
+                        if event.key == pygame.K_z:
+                            self.undo()
+                        elif event.key == pygame.K_h:
+                            self.trigger_hint()
 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if self.state == "START":
@@ -499,7 +563,8 @@ class Game:
                 remain = sum(1 for row in self.grid for val in row if val != 0)
 
                 if remain == 0 and len(self.arrows) == 0:
-                    self.final_time = (pygame.time.get_ticks() - self.level_start_time) // 1000
+                    self.final_time = (
+                                                  pygame.time.get_ticks() - self.level_start_time) // 1000 if self.has_started_moving else 0
                     self.calculate_stars()
 
                     record = self.level_records[self.current_level]
