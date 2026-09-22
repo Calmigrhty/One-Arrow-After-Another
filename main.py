@@ -1,121 +1,17 @@
-import pygame
 import sys
-import math
 import random
 import json
 import os
 
-# ================= 配置与常量 =================
-SCREEN_WIDTH = 600
-SCREEN_HEIGHT = 700
-FPS = 60
-GRID_SIZE = 80
-SAVE_FILE = "save_data.json"
-
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-GRAY = (220, 220, 220)
-
-DIR_MAP = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
-
-# ================= 关卡设计 =================
-LEVELS = [
-    {"grid": [[0, 0, 0, 0], [0, 1, 0, 0], [0, 4, 2, 0], [0, 0, 2, 0]], "mistakes": 3, "target_time": 30},
-    {"grid": [[0, 1, 0, 2], [4, 4, 1, 0], [0, 1, 0, 0], [0, 3, 1, 2]], "mistakes": 4, "target_time": 45},
-    {"grid": [[1, 2, 3, 4], [3, 2, 1, 1], [1, 3, 4, 4], [4, 2, 1, 1]], "mistakes": 5, "target_time": 50},
-    {"grid": [[1, 1, 3, 3], [4, 1, 1, 4], [3, 4, 1, 4], [1, 1, 1, 1]], "mistakes": 3, "target_time": 45},
-    {"grid": [[0, 1, 1, 1, 0], [3, 4, 1, 4, 4], [3, 3, 1, 2, 4], [3, 1, 3, 2, 4], [0, 2, 2, 2, 0]], "mistakes": 5,
-     "target_time": 60}
-]
-
-
-# ================= 智能字体匹配 =================
-def get_chinese_font(size):
-    candidates = ["microsoftyahei", "simhei", "pingfangsc", "pingfang", "heiti", "stheitiregular", "arialunicodems",
-                  "droidsansfallback", "songti", "stsong", "nsimsun", "simsun", "hiraginosansgb"]
-    try:
-        pygame.font.init()
-        available_fonts = pygame.font.get_fonts()
-        for name in candidates:
-            if name in available_fonts: return pygame.font.SysFont(name, size)
-        for name in available_fonts:
-            if any(keyword in name for keyword in ["hei", "yahei", "pingfang", "song", "cjk", "fallback"]):
-                return pygame.font.SysFont(name, size)
-    except:
-        pass
-    return pygame.font.SysFont(None, size)
-
-
-# ================= 箭头类 =================
-class Arrow:
-    def __init__(self, r, c, dir_type):
-        self.r, self.c = r, c
-        self.dir_type = dir_type
-        self.x, self.y = c * GRID_SIZE, r * GRID_SIZE
-        self.state = "idle"
-        self.shake_timer = 0
-        self.speed = 20
-        self.is_dead = False
-        self.is_hinted = False
-        self.color = (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
-
-    def update(self):
-        if self.state == "flying":
-            dr, dc = DIR_MAP[self.dir_type]
-            self.x += dc * self.speed
-            self.y += dr * self.speed
-            if abs(self.x) > SCREEN_WIDTH or abs(self.y) > SCREEN_HEIGHT:
-                self.is_dead = True
-        elif self.state == "shaking":
-            self.shake_timer -= 1
-            if self.shake_timer <= 0: self.state = "idle"
-
-    def draw(self, surface, offset_x, offset_y):
-        if self.is_dead: return
-        draw_x, draw_y = offset_x + self.x, offset_y + self.y
-
-        if self.state == "shaking":
-            shake_amt = math.sin(self.shake_timer) * 5
-            if self.dir_type in [1, 2]:
-                draw_x += shake_amt
-            else:
-                draw_y += shake_amt
-
-        if self.is_hinted:
-            pulse = (math.sin(pygame.time.get_ticks() / 200) + 1) / 2
-            glow_color = (255, int(200 + 55 * pulse), 0)
-            glow_rect = pygame.Rect(draw_x + 2, draw_y + 2, GRID_SIZE - 4, GRID_SIZE - 4)
-            pygame.draw.rect(surface, glow_color, glow_rect, width=4, border_radius=12)
-
-        cx, cy = draw_x + GRID_SIZE // 2, draw_y + GRID_SIZE // 2
-        shaft_len, shaft_thick, head_len, head_wide, neck = 16, 6, 18, 15, 4
-
-        if self.dir_type == 1:
-            pts = [(cx - shaft_thick, cy + shaft_len), (cx - shaft_thick, cy - neck), (cx - head_wide, cy - neck),
-                   (cx, cy - head_len), (cx + head_wide, cy - neck), (cx + shaft_thick, cy - neck),
-                   (cx + shaft_thick, cy + shaft_len)]
-        elif self.dir_type == 2:
-            pts = [(cx - shaft_thick, cy - shaft_len), (cx - shaft_thick, cy + neck), (cx - head_wide, cy + neck),
-                   (cx, cy + head_len), (cx + head_wide, cy + neck), (cx + shaft_thick, cy + neck),
-                   (cx + shaft_thick, cy - shaft_len)]
-        elif self.dir_type == 3:
-            pts = [(cx + shaft_len, cy - shaft_thick), (cx - neck, cy - shaft_thick), (cx - neck, cy - head_wide),
-                   (cx - head_len, cy), (cx - neck, cy + head_wide), (cx - neck, cy + shaft_thick),
-                   (cx + shaft_len, cy + shaft_thick)]
-        elif self.dir_type == 4:
-            pts = [(cx - shaft_len, cy - shaft_thick), (cx + neck, cy - shaft_thick), (cx + neck, cy - head_wide),
-                   (cx + head_len, cy), (cx + neck, cy + head_wide), (cx + neck, cy + shaft_thick),
-                   (cx - shaft_len, cy + shaft_thick)]
-
-        pygame.draw.polygon(surface, self.color, pts)
-
+from configs import *
+import arrows
 
 # ================= 游戏主控制类 =================
 class Game:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("一箭又一箭 - 完整版")
+        pygame.display.set_caption("一箭又一箭")
         self.clock = pygame.time.Clock()
 
         self.font_title = get_chinese_font(60)
@@ -219,7 +115,7 @@ class Game:
 
             self.arrows = []
             for a_data in p["arrows"]:
-                arr = Arrow(a_data["r"], a_data["c"], a_data["dir_type"])
+                arr = arrows.Arrow(a_data["r"], a_data["c"], a_data["dir_type"])
                 arr.color = tuple(a_data["color"])
                 self.arrows.append(arr)
 
@@ -257,7 +153,7 @@ class Game:
         self.arrows = []
         for r in range(self.rows):
             for c in range(self.cols):
-                if self.grid[r][c] != 0: self.arrows.append(Arrow(r, c, self.grid[r][c]))
+                if self.grid[r][c] != 0: self.arrows.append(arrows.Arrow(r, c, self.grid[r][c]))
 
         self.level_start_time = 0
         self.has_started_moving = False
@@ -381,7 +277,7 @@ class Game:
 
         self.arrows = []
         for a_data in last_state["arrows"]:
-            new_arrow = Arrow(a_data["r"], a_data["c"], a_data["dir_type"])
+            new_arrow = arrows.Arrow(a_data["r"], a_data["c"], a_data["dir_type"])
             new_arrow.x, new_arrow.y = a_data["x"], a_data["y"]
             new_arrow.state, new_arrow.is_dead = a_data["state"], a_data["is_dead"]
             new_arrow.color, new_arrow.is_hinted = tuple(a_data["color"]), a_data["is_hinted"]
@@ -501,7 +397,7 @@ class Game:
                 btn_resume = pygame.Rect(SCREEN_WIDTH // 2 - 80, SCREEN_HEIGHT // 2 - 20, 160, 50)
                 pygame.draw.rect(self.screen, (70, 130, 180), btn_resume, border_radius=25)
                 pygame.draw.rect(self.screen, WHITE, btn_resume, width=2, border_radius=25)
-                # 使用 font_normal 正常字号，彻底解决撑破格子的问题
+                # 使用 font_normal 正常字号，解决撑破格子的问题
                 self.draw_text("继续游戏", self.font_normal, WHITE, btn_resume.centerx, btn_resume.centery,
                                shadow=False)
 
@@ -726,8 +622,7 @@ class Game:
                 remain = sum(1 for row in self.grid for val in row if val != 0)
 
                 if remain == 0 and len(self.arrows) == 0:
-                    self.final_time = (
-                                                  pygame.time.get_ticks() - self.level_start_time) // 1000 if self.has_started_moving else 0
+                    self.final_time = (pygame.time.get_ticks() - self.level_start_time) // 1000 if self.has_started_moving else 0
                     self.calculate_stars()
 
                     if self.current_level != "RANDOM" and not self.used_ai:
