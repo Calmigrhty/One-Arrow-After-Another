@@ -1,0 +1,11 @@
+# Python 与 IDE 缓存
+.venv/
+__pycache__/
+*.pyc
+.idea/
+.DS_Store
+
+# PyInstaller 打包产物
+build/
+dist/
+*.spec
